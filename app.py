@@ -28,7 +28,22 @@ def get_vectorstore():
         st.session_state.vectorstore = None
     return st.session_state.vectorstore
 
-if st.session_state.get("vectorstore") is None:
+def ingest_pdf(uploaded_file):
+    reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() or ""
+
+    if not text.strip():
+        return False, "No text could be extracted from this PDF."
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = splitter.split_text(text)
+    metadata = [{"source": uploaded_file.name}] * len(chunks)
+
+    embeddings = get_embeddings()
+
+    if st.session_state.get("vectorstore") is None:
         st.session_state.vectorstore = FAISS.from_texts(
             texts=chunks,
             embedding=embeddings,
@@ -41,6 +56,9 @@ if st.session_state.get("vectorstore") is None:
             metadatas=metadata
         )
         st.session_state.vectorstore.merge_from(new_vs)
+
+    return True, f"Ingested {uploaded_file.name} - {len(chunks)} chunks added."
+
 def ask(question):
     vectorstore = get_vectorstore()
 
