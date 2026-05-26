@@ -32,11 +32,8 @@ def load_vectorstore():
     return vectorstore
 
 def ingest_pdf(uploaded_file):
-    save_path = os.path.join(RAW_DIR, uploaded_file.name)
-    with open(save_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    reader = PyPDF2.PdfReader(save_path)
+    import io
+    reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
     text = ""
     for page in reader.pages:
         text += page.extract_text() or ""
@@ -56,6 +53,7 @@ def ingest_pdf(uploaded_file):
     vectorstore.add_texts(texts=chunks, metadatas=metadata)
 
     return True, f"Ingested {uploaded_file.name} - {len(chunks)} chunks added."
+
 
 def ask(question):
     vectorstore = load_vectorstore()
