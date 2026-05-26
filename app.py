@@ -1,5 +1,6 @@
 import os
 import sys
+import io
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 import streamlit as st
@@ -12,10 +13,6 @@ import PyPDF2
 
 load_dotenv()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CHROMA_DIR = os.path.join(BASE_DIR, "data", "processed", "chroma_db")
-RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
-
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 st.set_page_config(page_title="CA Tax Assistant", page_icon="📋")
@@ -23,16 +20,15 @@ st.title("CA Tax Notification Assistant")
 st.caption("Ask questions about loaded tax notifications. Answers are sourced strictly from uploaded documents.")
 
 @st.cache_resource
-def load_vectorstore():
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = Chroma(
-        persist_directory=CHROMA_DIR,
-        embedding_function=embeddings
-    )
-    return vectorstore
+def get_embeddings():
+    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+def get_vectorstore():
+    if "vectorstore" not in st.session_state:
+        st.session_state.vectorstore = None
+    return st.session_state.vectorstore
 
 def ingest_pdf(uploaded_file):
-    import io
     reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
     text = ""
     for page in reader.pages:
@@ -45,20 +41,26 @@ def ingest_pdf(uploaded_file):
     chunks = splitter.split_text(text)
     metadata = [{"source": uploaded_file.name}] * len(chunks)
 
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = Chroma(
-        persist_directory=CHROMA_DIR,
-        embedding_function=embeddings
-    )
-    vectorstore.add_texts(texts=chunks, metadatas=metadata)
+    embeddings = get_embeddings()
+
+    if st.session_state.get("vectorstore") is None:
+        st.session_state.vectorstore = Chroma.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            metadatas=metadata
+        )
+    else:
+        st.session_state.vectorstore.add_texts(texts=chunks, metadatas=metadata)
 
     return True, f"Ingested {uploaded_file.name} - {len(chunks)} chunks added."
 
-
 def ask(question):
-    vectorstore = load_vectorstore()
-    results = vectorstore.similarity_search(question, k=3)
+    vectorstore = get_vectorstore()
 
+    if vectorstore is None:
+        return "No notifications loaded yet. Please upload a PDF first.", []
+
+    results = vectorstore.similarity_search(question, k=3)
     context = "\n\n".join([doc.page_content for doc in results])
     sources = list(set([doc.metadata.get("source", "unknown") for doc in results]))
 
@@ -88,7 +90,6 @@ with st.sidebar:
             success, message = ingest_pdf(uploaded_file)
         if success:
             st.success(message)
-            st.cache_resource.clear()
         else:
             st.error(message)
 
@@ -108,6 +109,7 @@ if question := st.chat_input("Ask about a tax notification..."):
         with st.spinner("Searching notifications..."):
             answer, sources = ask(question)
         st.markdown(answer)
-        st.caption(f"Sources: {', '.join(sources)}")
+        if sources:
+            st.caption(f"Sources: {', '.join(sources)}")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
