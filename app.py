@@ -6,7 +6,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from groq import Groq
 import PyPDF2
@@ -28,32 +28,19 @@ def get_vectorstore():
         st.session_state.vectorstore = None
     return st.session_state.vectorstore
 
-def ingest_pdf(uploaded_file):
-    reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() or ""
-
-    if not text.strip():
-        return False, "No text could be extracted from this PDF."
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_text(text)
-    metadata = [{"source": uploaded_file.name}] * len(chunks)
-
-    embeddings = get_embeddings()
-
-    if st.session_state.get("vectorstore") is None:
-        st.session_state.vectorstore = Chroma.from_texts(
+if st.session_state.get("vectorstore") is None:
+        st.session_state.vectorstore = FAISS.from_texts(
             texts=chunks,
             embedding=embeddings,
             metadatas=metadata
         )
     else:
-        st.session_state.vectorstore.add_texts(texts=chunks, metadatas=metadata)
-
-    return True, f"Ingested {uploaded_file.name} - {len(chunks)} chunks added."
-
+        new_vs = FAISS.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            metadatas=metadata
+        )
+        st.session_state.vectorstore.merge_from(new_vs)
 def ask(question):
     vectorstore = get_vectorstore()
 
